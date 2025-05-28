@@ -145,13 +145,11 @@ export class AuthService {
    * Обновление последней активности представителя
    */
   private static async updateLastActivity(userId: string): Promise<void> {
-    // TODO: Обновление lastActivity будет доступно после миграции схемы
-    // const { prisma } = await import('../lib/prisma');
-    // await prisma.user.update({
-    //   where: { id: userId },
-    //   data: { lastActivity: new Date() },
-    // });
-    console.log(`Last activity updated for user ${userId}`);
+    const { prisma } = await import('../lib/prisma');
+    await prisma.user.update({
+      where: { id: userId },
+      data: { lastActivity: new Date() },
+    });
   }
 
   /**

@@ -1,15 +1,11 @@
-import { User } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { createError } from '../middleware/error-handler';
-import { CacheService } from '../cache/cache';
-import { UserWithoutPassword } from '../types/auth.types';
 import { prisma } from '../lib/prisma';
 import { RequestUser, RegisterData, OAuthData } from '../types/auth.types';
-// import { cache } from '../cache/cache'; // Временно отключено
 
 export class UserService {
   /**
-   * Получить всех пользователей (без паролей) - временная заглушка
+   * Получить всех пользователей (без паролей)
    */
   static async getAllUsers(): Promise<RequestUser[]> {
     const users = await prisma.user.findMany({
@@ -17,7 +13,19 @@ export class UserService {
         id: true,
         email: true,
         name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
         role: true,
+        position: true,
+        party: true,
+        rating: true,
+        tasksTotal: true,
+        tasksCompleted: true,
+        attendance: true,
+        lastActivity: true,
+        balance: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -27,20 +35,20 @@ export class UserService {
       id: user.id,
       email: user.email,
       name: user.name || undefined,
-      phone: undefined, // TODO: После миграции
-      district: undefined, // TODO: После миграции
-      verified: false, // TODO: После миграции
-      isRepresentative: false, // TODO: После миграции
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
       role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
-      position: undefined, // TODO: После миграции
-      party: undefined, // TODO: После миграции
-      rating: undefined, // TODO: После миграции
-      balance: 0, // TODO: После миграции
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
     }));
   }
 
   /**
-   * Найти пользователя по ID (без пароля) - временная заглушка
+   * Найти пользователя по ID (без пароля)
    */
   static async findUserById(id: string): Promise<RequestUser | null> {
     const user = await prisma.user.findUnique({
@@ -49,7 +57,19 @@ export class UserService {
         id: true,
         email: true,
         name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
         role: true,
+        position: true,
+        party: true,
+        rating: true,
+        tasksTotal: true,
+        tasksCompleted: true,
+        attendance: true,
+        lastActivity: true,
+        balance: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -63,15 +83,15 @@ export class UserService {
       id: user.id,
       email: user.email,
       name: user.name || undefined,
-      phone: undefined, // TODO: После миграции
-      district: undefined, // TODO: После миграции
-      verified: false, // TODO: После миграции
-      isRepresentative: false, // TODO: После миграции
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
       role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
-      position: undefined, // TODO: После миграции
-      party: undefined, // TODO: После миграции
-      rating: undefined, // TODO: После миграции
-      balance: 0, // TODO: После миграции
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
     };
   }
 
@@ -85,15 +105,16 @@ export class UserService {
   }
 
   /**
-   * Найти пользователя по телефону - временная заглушка
+   * Найти пользователя по телефону
    */
   static async findUserByPhone(phone: string) {
-    // TODO: После миграции добавить поиск по телефону
-    return null;
+    return await prisma.user.findUnique({
+      where: { phone },
+    });
   }
 
   /**
-   * Создать нового пользователя - временная заглушка
+   * Создать нового пользователя
    */
   static async createUser(userData: RegisterData): Promise<RequestUser> {
     // Проверяем, существует ли пользователь с таким email
@@ -102,21 +123,49 @@ export class UserService {
       throw createError('User with this email already exists', 400);
     }
 
+    // Проверяем телефон, если указан
+    if (userData.phone) {
+      const existingPhone = await this.findUserByPhone(userData.phone);
+      if (existingPhone) {
+        throw createError('User with this phone already exists', 400);
+      }
+    }
+
     // Хешируем пароль
     const hashedPassword = await bcrypt.hash(userData.password, 12);
+
+    // Определяем роль
+    let role: 'USER' | 'REPRESENTATIVE' | 'ADMIN' = 'USER';
+    if (userData.isRepresentative) {
+      role = 'REPRESENTATIVE';
+    }
 
     const user = await prisma.user.create({
       data: {
         email: userData.email,
         password: hashedPassword,
         name: userData.name,
-        // TODO: После миграции добавить остальные поля
+        phone: userData.phone,
+        district: userData.district,
+        isRepresentative: userData.isRepresentative || false,
+        role,
+        position: userData.position,
+        party: userData.party,
+        balance: userData.isRepresentative ? 0 : 10, // Бонус за регистрацию для обычных пользователей
       },
       select: {
         id: true,
         email: true,
         name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
         role: true,
+        position: true,
+        party: true,
+        rating: true,
+        balance: true,
       },
     });
 
@@ -124,20 +173,20 @@ export class UserService {
       id: user.id,
       email: user.email,
       name: user.name || undefined,
-      phone: userData.phone, // Сохраняем в памяти до миграции
-      district: userData.district,
-      verified: false,
-      isRepresentative: userData.isRepresentative || false,
-      role: 'USER',
-      position: userData.position,
-      party: userData.party,
-      rating: undefined,
-      balance: 10, // Бонус за регистрацию
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
     };
   }
 
   /**
-   * Создать пользователя через OAuth - временная заглушка
+   * Создать пользователя через OAuth
    */
   static async createOAuthUser(oauthData: OAuthData): Promise<RequestUser> {
     // Проверяем, существует ли пользователь с таким email
@@ -146,18 +195,30 @@ export class UserService {
       throw createError('User with this email already exists', 400);
     }
 
+    const providerField = `${oauthData.provider}Id`;
+
     const user = await prisma.user.create({
       data: {
         email: oauthData.email,
-        password: '', // Временно пустой пароль для OAuth пользователей
         name: oauthData.name,
-        // TODO: После миграции добавить OAuth поля
+        phone: oauthData.phone,
+        verified: oauthData.verified || true, // OAuth пользователи считаются верифицированными
+        [providerField]: oauthData.providerId,
+        balance: 10, // Бонус за регистрацию
       },
       select: {
         id: true,
         email: true,
         name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
         role: true,
+        position: true,
+        party: true,
+        rating: true,
+        balance: true,
       },
     });
 
@@ -165,20 +226,20 @@ export class UserService {
       id: user.id,
       email: user.email,
       name: user.name || undefined,
-      phone: oauthData.phone,
-      district: undefined,
-      verified: oauthData.verified || true,
-      isRepresentative: false,
-      role: 'USER',
-      position: undefined,
-      party: undefined,
-      rating: undefined,
-      balance: 10, // Бонус за регистрацию
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
     };
   }
 
   /**
-   * Обновить пользователя - временная заглушка
+   * Обновить пользователя
    */
   static async updateUser(
     id: string,
@@ -190,17 +251,35 @@ export class UserService {
       party: string;
     }>
   ): Promise<RequestUser> {
+    // Проверяем телефон на уникальность, если он обновляется
+    if (updateData.phone) {
+      const existingPhone = await prisma.user.findFirst({
+        where: {
+          phone: updateData.phone,
+          NOT: { id },
+        },
+      });
+      if (existingPhone) {
+        throw createError('User with this phone already exists', 400);
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id },
-      data: {
-        name: updateData.name,
-        // TODO: После миграции добавить остальные поля
-      },
+      data: updateData,
       select: {
         id: true,
         email: true,
         name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
         role: true,
+        position: true,
+        party: true,
+        rating: true,
+        balance: true,
       },
     });
 
@@ -208,15 +287,15 @@ export class UserService {
       id: user.id,
       email: user.email,
       name: user.name || undefined,
-      phone: updateData.phone,
-      district: updateData.district,
-      verified: false,
-      isRepresentative: false,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
       role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
-      position: updateData.position,
-      party: updateData.party,
-      rating: undefined,
-      balance: 0,
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
     };
   }
 
@@ -252,27 +331,84 @@ export class UserService {
   }
 
   /**
-   * Верифицировать пользователя - временная заглушка
+   * Верифицировать пользователя
    */
   static async verifyUser(id: string): Promise<RequestUser> {
-    const user = await this.findUserById(id);
-    if (!user) {
-      throw createError('User not found', 404);
-    }
+    const user = await prisma.user.update({
+      where: { id },
+      data: { verified: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
+        role: true,
+        position: true,
+        party: true,
+        rating: true,
+        balance: true,
+      },
+    });
 
-    // TODO: После миграции обновлять поле verified в БД
     return {
-      ...user,
-      verified: true,
+      id: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
     };
   }
 
   /**
-   * Получить представителей власти - временная заглушка
+   * Получить представителей власти
    */
   static async getRepresentatives(): Promise<RequestUser[]> {
-    // TODO: После миграции фильтровать по isRepresentative
-    const users = await this.getAllUsers();
-    return users.filter(user => user.isRepresentative);
+    const representatives = await prisma.user.findMany({
+      where: { isRepresentative: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
+        role: true,
+        position: true,
+        party: true,
+        rating: true,
+        tasksTotal: true,
+        tasksCompleted: true,
+        attendance: true,
+        lastActivity: true,
+        balance: true,
+      },
+      orderBy: { rating: 'desc' },
+    });
+
+    return representatives.map(user => ({
+      id: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
+    }));
   }
 }
