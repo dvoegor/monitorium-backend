@@ -6,113 +6,183 @@ import {
   JwtPayload,
   UserWithoutPassword,
   AuthResponse,
+  RegisterData,
+  OAuthData,
+  RequestUser,
 } from '../types/auth.types';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
-
 export class AuthService {
-  /**
-   * Generates JWT token for user
-   * @param user - User object without password
-   * @returns JWT token string
-   */
-  static generateToken(user: UserWithoutPassword): string {
-    const payload: JwtPayload = {
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    };
-
-    return jwt.sign(payload, JWT_SECRET, {
-      expiresIn: JWT_EXPIRES_IN,
-    } as jwt.SignOptions);
-  }
+  private static readonly JWT_SECRET =
+    process.env.JWT_SECRET || 'your-secret-key';
+  private static readonly JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
   /**
-   * Verifies JWT token and returns payload
-   * @param token - JWT token string
-   * @returns Decoded JWT payload
-   * @throws AppError if token is invalid
-   */
-  static verifyToken(token: string): JwtPayload {
-    try {
-      return jwt.verify(token, JWT_SECRET) as JwtPayload;
-    } catch (error) {
-      throw createError('Invalid token', 401);
-    }
-  }
-
-  /**
-   * Registers a new user
-   * @param email - User email
-   * @param password - User password
-   * @param name - Optional user name
-   * @returns User object and JWT token
+   * Регистрация нового пользователя
    */
   static async register(
     email: string,
     password: string,
-    name?: string
+    name: string,
+    phone?: string,
+    district?: string,
+    isRepresentative?: boolean,
+    position?: string,
+    party?: string
   ): Promise<AuthResponse> {
-    const user = await UserService.createUser(email, password, name);
-    const token = this.generateToken(user);
-
-    return {
-      user,
-      token,
+    const userData: RegisterData = {
+      email,
+      password,
+      name,
+      phone,
+      district,
+      isRepresentative,
+      position,
+      party,
     };
+
+    const user = await UserService.createUser(userData);
+    const token = this.generateToken(user.id);
+
+    return { user, token };
   }
 
   /**
-   * Authenticates user with email and password
-   * @param email - User email
-   * @param password - User password
-   * @returns User object and JWT token
-   * @throws AppError if credentials are invalid
+   * Авторизация пользователя
    */
   static async login(email: string, password: string): Promise<AuthResponse> {
-    // Находим пользователя
-    const user = await UserService.findUserByEmail(email);
-    if (!user) {
+    // Находим пользователя с паролем
+    const userWithPassword = await UserService.findUserByEmail(email);
+    if (!userWithPassword || !userWithPassword.password) {
       throw createError('Invalid credentials', 401);
     }
 
     // Проверяем пароль
     const isPasswordValid = await UserService.verifyPassword(
       password,
-      user.password
+      userWithPassword.password
     );
+
     if (!isPasswordValid) {
       throw createError('Invalid credentials', 401);
     }
 
-    // Убираем пароль из ответа
-    const { password: _, ...userWithoutPassword } = user;
-
-    // Генерируем токен
-    const token = this.generateToken(userWithoutPassword);
-
-    return {
-      user: userWithoutPassword,
-      token,
-    };
-  }
-
-  /**
-   * Gets user from JWT token
-   * @param token - JWT token string
-   * @returns User object without password
-   * @throws AppError if token is invalid or user not found
-   */
-  static async getUserFromToken(token: string): Promise<UserWithoutPassword> {
-    const payload = this.verifyToken(token);
-    const user = await UserService.findUserById(payload.userId);
-
+    // Получаем пользователя без пароля
+    const user = await UserService.findUserById(userWithPassword.id);
     if (!user) {
       throw createError('User not found', 404);
     }
 
-    return user;
+    // Обновляем последнюю активность для представителей
+    if (user.isRepresentative) {
+      await this.updateLastActivity(user.id);
+    }
+
+    const token = this.generateToken(user.id);
+    return { user, token };
+  }
+
+  /**
+   * OAuth авторизация
+   */
+  static async oauthLogin(oauthData: OAuthData): Promise<AuthResponse> {
+    // Проверяем, существует ли пользователь с таким email
+    const existingUser = await UserService.findUserByEmail(oauthData.email);
+
+    let user: RequestUser;
+
+    if (existingUser) {
+      // Пользователь существует, получаем его данные
+      const foundUser = await UserService.findUserById(existingUser.id);
+      if (!foundUser) {
+        throw createError('User not found', 404);
+      }
+      user = foundUser;
+
+      // Обновляем последнюю активность для представителей
+      if (user.isRepresentative) {
+        await this.updateLastActivity(user.id);
+      }
+    } else {
+      // Создаем нового пользователя
+      user = await UserService.createOAuthUser(oauthData);
+    }
+
+    const token = this.generateToken(user.id);
+    return { user, token };
+  }
+
+  /**
+   * Получение пользователя по токену
+   */
+  static async getUserFromToken(token: string): Promise<RequestUser> {
+    try {
+      const decoded = jwt.verify(token, this.JWT_SECRET) as { userId: string };
+      const user = await UserService.findUserById(decoded.userId);
+
+      if (!user) {
+        throw createError('User not found', 404);
+      }
+
+      return user;
+    } catch (error) {
+      if (error instanceof jwt.JsonWebTokenError) {
+        throw createError('Invalid token', 401);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Генерация JWT токена
+   */
+  private static generateToken(userId: string): string {
+    return jwt.sign({ userId }, this.JWT_SECRET, {
+      expiresIn: this.JWT_EXPIRES_IN,
+    } as jwt.SignOptions);
+  }
+
+  /**
+   * Обновление последней активности представителя
+   */
+  private static async updateLastActivity(userId: string): Promise<void> {
+    // TODO: Обновление lastActivity будет доступно после миграции схемы
+    // const { prisma } = await import('../lib/prisma');
+    // await prisma.user.update({
+    //   where: { id: userId },
+    //   data: { lastActivity: new Date() },
+    // });
+    console.log(`Last activity updated for user ${userId}`);
+  }
+
+  /**
+   * Верификация пользователя
+   */
+  static async verifyUser(userId: string): Promise<RequestUser> {
+    return await UserService.verifyUser(userId);
+  }
+
+  /**
+   * Сброс пароля (заглушка для будущей реализации)
+   */
+  static async requestPasswordReset(email: string): Promise<void> {
+    const user = await UserService.findUserByEmail(email);
+    if (!user) {
+      // Не раскрываем информацию о существовании пользователя
+      return;
+    }
+
+    // TODO: Реализовать отправку email с токеном сброса
+    console.log(`Password reset requested for ${email}`);
+  }
+
+  /**
+   * Подтверждение сброса пароля (заглушка для будущей реализации)
+   */
+  static async resetPassword(
+    token: string,
+    newPassword: string
+  ): Promise<void> {
+    // TODO: Реализовать проверку токена и сброс пароля
+    throw createError('Password reset not implemented yet', 501);
   }
 }

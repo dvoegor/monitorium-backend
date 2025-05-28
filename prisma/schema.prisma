@@ -14,18 +14,41 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  name      String?
-  role      Role     @default(USER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String    @id @default(cuid())
+  email            String    @unique
+  password         String?   // Nullable для пользователей через OAuth
+  name             String?
+  phone            String?   @unique
+  district         String?   // Округ пользователя
+  verified         Boolean   @default(false)
+  isRepresentative Boolean   @default(false)
+  role             Role      @default(USER)
+  
+  // Поля для представителей власти
+  position         String?   // "Депутат городской думы", "Глава района"
+  party            String?   // Политическая партия
+  rating           Float?    @default(0.0)
+  tasksTotal       Int       @default(0)
+  tasksCompleted   Int       @default(0)
+  attendance       Float?    @default(0.0) // Посещаемость в процентах
+  lastActivity     DateTime?
+  
+  // OAuth провайдеры
+  gosuslugiId      String?   @unique
+  sberId           String?   @unique
+  tinkoffId        String?   @unique
+  
+  // Баланс токенов
+  balance          Int       @default(0)
+  
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@map("users")
 }
 
 enum Role {
   USER
+  REPRESENTATIVE
   ADMIN
 }

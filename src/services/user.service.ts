@@ -4,161 +4,347 @@ import { createError } from '../middleware/error-handler';
 import { CacheService } from '../cache/cache';
 import { UserWithoutPassword } from '../types/auth.types';
 import { prisma } from '../lib/prisma';
+import { RequestUser, RegisterData, OAuthData } from '../types/auth.types';
+import { cache } from '../cache/cache';
 
 export class UserService {
   /**
-   * Creates a new user
-   * @param email - User email
-   * @param password - User password (will be hashed)
-   * @param name - Optional user name
-   * @returns User object without password
-   * @throws AppError if user already exists
+   * Получить всех пользователей (без паролей)
    */
-  static async createUser(
-    email: string,
-    password: string,
-    name?: string
-  ): Promise<UserWithoutPassword> {
-    // Проверяем, существует ли пользователь
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (existingUser) {
-      throw createError('User already exists', 409);
-    }
-
-    // Хешируем пароль
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    // Создаем пользователя
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        name,
+  static async getAllUsers(): Promise<RequestUser[]> {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
+        role: true,
+        position: true,
+        party: true,
+        rating: true,
+        tasksTotal: true,
+        tasksCompleted: true,
+        attendance: true,
+        lastActivity: true,
+        balance: true,
+        createdAt: true,
+        updatedAt: true,
       },
     });
 
-    // Убираем пароль из ответа
-    const { password: _, ...userWithoutPassword } = user;
-
-    // Кэшируем пользователя
-    CacheService.set(`user:${user.id}`, userWithoutPassword, 300); // 5 минут
-
-    return userWithoutPassword;
+    return users.map(user => ({
+      id: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
+    }));
   }
 
   /**
-   * Finds user by email (includes password for authentication)
-   * @param email - User email
-   * @returns User object with password or null
+   * Найти пользователя по ID (без пароля)
    */
-  static async findUserByEmail(email: string): Promise<User | null> {
-    return await prisma.user.findUnique({
-      where: { email },
-    });
-  }
-
-  /**
-   * Finds user by ID (without password)
-   * @param id - User ID
-   * @returns User object without password or null
-   */
-  static async findUserById(id: string): Promise<UserWithoutPassword | null> {
-    // Сначала проверяем кэш
-    const cachedUser = CacheService.get<UserWithoutPassword>(`user:${id}`);
-    if (cachedUser) {
-      return cachedUser;
+  static async findUserById(id: string): Promise<RequestUser | null> {
+    const cacheKey = `user:${id}`;
+    const cached = cache.get<RequestUser>(cacheKey);
+    if (cached) {
+      return cached;
     }
 
-    // Если в кэше нет, ищем в БД
     const user = await prisma.user.findUnique({
       where: { id },
       select: {
         id: true,
         email: true,
         name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
         role: true,
+        position: true,
+        party: true,
+        rating: true,
+        tasksTotal: true,
+        tasksCompleted: true,
+        attendance: true,
+        lastActivity: true,
+        balance: true,
         createdAt: true,
         updatedAt: true,
       },
     });
 
-    if (user) {
-      // Кэшируем результат
-      CacheService.set(`user:${id}`, user, 300); // 5 минут
+    if (!user) {
+      return null;
     }
 
-    return user;
+    const requestUser: RequestUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
+    };
+
+    cache.set(cacheKey, requestUser, 300); // 5 минут
+    return requestUser;
   }
 
   /**
-   * Gets all users (without passwords)
-   * @returns Array of user objects without passwords
+   * Найти пользователя по email (с паролем для аутентификации)
    */
-  static async getAllUsers(): Promise<UserWithoutPassword[]> {
-    const users = await prisma.user.findMany({
+  static async findUserByEmail(email: string) {
+    return await prisma.user.findUnique({
+      where: { email },
+    });
+  }
+
+  /**
+   * Найти пользователя по телефону
+   */
+  static async findUserByPhone(phone: string) {
+    return await prisma.user.findUnique({
+      where: { phone },
+    });
+  }
+
+  /**
+   * Создать нового пользователя
+   */
+  static async createUser(userData: RegisterData): Promise<RequestUser> {
+    // Проверяем, существует ли пользователь с таким email
+    const existingUser = await this.findUserByEmail(userData.email);
+    if (existingUser) {
+      throw createError('User with this email already exists', 400);
+    }
+
+    // Проверяем телефон, если указан
+    if (userData.phone) {
+      const existingPhone = await this.findUserByPhone(userData.phone);
+      if (existingPhone) {
+        throw createError('User with this phone already exists', 400);
+      }
+    }
+
+    // Хешируем пароль
+    const hashedPassword = await bcrypt.hash(userData.password, 12);
+
+    // Определяем роль
+    let role: 'USER' | 'REPRESENTATIVE' | 'ADMIN' = 'USER';
+    if (userData.isRepresentative) {
+      role = 'REPRESENTATIVE';
+    }
+
+    const user = await prisma.user.create({
+      data: {
+        email: userData.email,
+        password: hashedPassword,
+        name: userData.name,
+        phone: userData.phone,
+        district: userData.district,
+        isRepresentative: userData.isRepresentative || false,
+        role,
+        position: userData.position,
+        party: userData.party,
+        balance: userData.isRepresentative ? 0 : 10, // Бонус за регистрацию для обычных пользователей
+      },
       select: {
         id: true,
         email: true,
         name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
         role: true,
-        createdAt: true,
-        updatedAt: true,
+        position: true,
+        party: true,
+        rating: true,
+        balance: true,
       },
     });
 
-    return users;
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
+    };
   }
 
   /**
-   * Updates user information
-   * @param id - User ID
-   * @param data - Partial user data to update
-   * @returns Updated user object without password
+   * Создать пользователя через OAuth
+   */
+  static async createOAuthUser(oauthData: OAuthData): Promise<RequestUser> {
+    // Проверяем, существует ли пользователь с таким email
+    const existingUser = await this.findUserByEmail(oauthData.email);
+    if (existingUser) {
+      throw createError('User with this email already exists', 400);
+    }
+
+    const providerField = `${oauthData.provider}Id`;
+
+    const user = await prisma.user.create({
+      data: {
+        email: oauthData.email,
+        name: oauthData.name,
+        phone: oauthData.phone,
+        verified: oauthData.verified || true, // OAuth пользователи считаются верифицированными
+        [providerField]: oauthData.providerId,
+        balance: 10, // Бонус за регистрацию
+      },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
+        role: true,
+        position: true,
+        party: true,
+        rating: true,
+        balance: true,
+      },
+    });
+
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
+    };
+  }
+
+  /**
+   * Обновить пользователя
    */
   static async updateUser(
     id: string,
-    data: Partial<Pick<User, 'name' | 'email'>>
-  ): Promise<UserWithoutPassword> {
+    updateData: Partial<{
+      name: string;
+      phone: string;
+      district: string;
+      position: string;
+      party: string;
+    }>
+  ): Promise<RequestUser> {
+    // Проверяем телефон на уникальность, если он обновляется
+    if (updateData.phone) {
+      const existingPhone = await prisma.user.findFirst({
+        where: {
+          phone: updateData.phone,
+          NOT: { id },
+        },
+      });
+      if (existingPhone) {
+        throw createError('User with this phone already exists', 400);
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id },
-      data,
+      data: updateData,
       select: {
         id: true,
         email: true,
         name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
         role: true,
-        createdAt: true,
-        updatedAt: true,
+        position: true,
+        party: true,
+        rating: true,
+        balance: true,
       },
     });
 
-    // Обновляем кэш
-    CacheService.set(`user:${id}`, user, 300);
+    const requestUser: RequestUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
+    };
 
-    return user;
+    // Обновляем кеш
+    const cacheKey = `user:${id}`;
+    cache.set(cacheKey, requestUser, 300);
+
+    return requestUser;
   }
 
   /**
-   * Deletes a user
-   * @param id - User ID
+   * Удалить пользователя
    */
   static async deleteUser(id: string): Promise<void> {
     await prisma.user.delete({
       where: { id },
     });
 
-    // Удаляем из кэша
-    CacheService.del(`user:${id}`);
+    // Удаляем из кеша
+    const cacheKey = `user:${id}`;
+    cache.del(cacheKey);
   }
 
   /**
-   * Verifies password against hash
-   * @param plainPassword - Plain text password
-   * @param hashedPassword - Hashed password from database
-   * @returns True if password matches
+   * Изменить пароль пользователя
+   */
+  static async changePassword(id: string, newPassword: string): Promise<void> {
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+    await prisma.user.update({
+      where: { id },
+      data: { password: hashedPassword },
+    });
+  }
+
+  /**
+   * Проверить пароль
    */
   static async verifyPassword(
     plainPassword: string,
@@ -168,16 +354,90 @@ export class UserService {
   }
 
   /**
-   * Changes user password
-   * @param id - User ID
-   * @param newPassword - New password (will be hashed)
+   * Верифицировать пользователя
    */
-  static async changePassword(id: string, newPassword: string): Promise<void> {
-    const hashedPassword = await bcrypt.hash(newPassword, 12);
-
-    await prisma.user.update({
+  static async verifyUser(id: string): Promise<RequestUser> {
+    const user = await prisma.user.update({
       where: { id },
-      data: { password: hashedPassword },
+      data: { verified: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
+        role: true,
+        position: true,
+        party: true,
+        rating: true,
+        balance: true,
+      },
     });
+
+    const requestUser: RequestUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
+    };
+
+    // Обновляем кеш
+    const cacheKey = `user:${id}`;
+    cache.set(cacheKey, requestUser, 300);
+
+    return requestUser;
+  }
+
+  /**
+   * Получить представителей власти
+   */
+  static async getRepresentatives(): Promise<RequestUser[]> {
+    const representatives = await prisma.user.findMany({
+      where: { isRepresentative: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        district: true,
+        verified: true,
+        isRepresentative: true,
+        role: true,
+        position: true,
+        party: true,
+        rating: true,
+        tasksTotal: true,
+        tasksCompleted: true,
+        attendance: true,
+        lastActivity: true,
+        balance: true,
+      },
+      orderBy: { rating: 'desc' },
+    });
+
+    return representatives.map(user => ({
+      id: user.id,
+      email: user.email,
+      name: user.name || undefined,
+      phone: user.phone || undefined,
+      district: user.district || undefined,
+      verified: user.verified,
+      isRepresentative: user.isRepresentative,
+      role: user.role as 'USER' | 'REPRESENTATIVE' | 'ADMIN',
+      position: user.position || undefined,
+      party: user.party || undefined,
+      rating: user.rating || undefined,
+      balance: user.balance,
+    }));
   }
 }
