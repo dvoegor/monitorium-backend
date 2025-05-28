@@ -6,7 +6,6 @@ import {
   loginSchema,
   changePasswordSchema,
 } from '../schemas/auth';
-import '../types/express';
 
 export class AuthController {
   // Регистрация

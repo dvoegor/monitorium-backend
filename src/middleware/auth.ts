@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { AuthService } from '../services/auth.service';
 import { createError } from './error-handler';
-import '../types/express';
 
 export const authenticateToken = async (
   req: Request,

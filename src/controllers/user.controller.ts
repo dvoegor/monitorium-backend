@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { UserService } from '../services/user.service';
 import { z } from 'zod';
-import '../types/express';
 
 const updateUserSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters').optional(),
