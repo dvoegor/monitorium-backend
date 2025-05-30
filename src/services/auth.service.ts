@@ -1,15 +1,13 @@
 import jwt from 'jsonwebtoken';
-import { User } from '@prisma/client';
 import { UserService } from './user.service';
 import { createError } from '../middleware/error-handler';
 import {
-  JwtPayload,
-  UserWithoutPassword,
   AuthResponse,
   RegisterData,
   OAuthData,
   RequestUser,
 } from '../types/auth.types';
+import { prisma } from '../lib/prisma';
 
 export class AuthService {
   private static readonly JWT_SECRET =
@@ -145,7 +143,6 @@ export class AuthService {
    * Обновление последней активности представителя
    */
   private static async updateLastActivity(userId: string): Promise<void> {
-    const { prisma } = await import('../lib/prisma');
     await prisma.user.update({
       where: { id: userId },
       data: { lastActivity: new Date() },
